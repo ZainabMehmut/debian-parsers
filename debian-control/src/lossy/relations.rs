@@ -390,6 +390,10 @@ impl std::str::FromStr for Relation {
             let mut archs = Vec::new();
             loop {
                 match tokens.next() {
+                    Some((NOT, _)) => match tokens.next() {
+                        Some((IDENT, s)) => archs.push(format!("!{}", s)),
+                        _ => return Err("Expected architecture name".to_string()),
+                    },
                     Some((IDENT, s)) => archs.push(s),
                     Some((WHITESPACE, _)) => {}
                     Some((R_BRACKET, _)) => break,
@@ -718,6 +722,26 @@ mod tests {
             .into_iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_negated_architectures() {
+        let input = "python3-dulwich [!arm64 !amd64]";
+        let parsed: Relations = input.parse().unwrap();
+        assert_eq!(parsed.to_string(), input);
+        assert_eq!(parsed.len(), 1);
+        let entry = &parsed[0];
+        assert_eq!(entry.len(), 1);
+        let relation = &entry[0];
+        assert_eq!(relation.to_string(), input);
+        assert_eq!(relation.version, None);
+        assert_eq!(
+            relation.architectures.as_ref().unwrap(),
+            &vec!["!arm64", "!amd64"]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
         );
     }
 
