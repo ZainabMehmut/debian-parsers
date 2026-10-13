@@ -2384,7 +2384,12 @@ impl Relation {
                 if i > 0 {
                     builder.token(WHITESPACE.into(), " ");
                 }
-                builder.token(IDENT.into(), arch.as_str());
+                if let Some(name) = arch.strip_prefix('!') {
+                    builder.token(NOT.into(), "!");
+                    builder.token(IDENT.into(), name);
+                } else {
+                    builder.token(IDENT.into(), arch.as_str());
+                }
             }
             builder.token(R_BRACKET.into(), "]");
             builder.finish_node();
@@ -2811,6 +2816,8 @@ impl Relation {
 
     /// Return an iterator over the architectures for this relation
     ///
+    /// Excluded architectures retain their leading `!`.
+    ///
     /// # Example
     /// ```
     /// use debian_control::lossless::relations::Relation;
@@ -2819,15 +2826,31 @@ impl Relation {
     /// ```
     pub fn architectures(&self) -> Option<impl Iterator<Item = String> + '_> {
         let architectures = self.0.children().find(|n| n.kind() == ARCHITECTURES)?;
+        let mut negated = false;
 
-        Some(architectures.children_with_tokens().filter_map(|node| {
-            let token = node.as_token()?;
-            if token.kind() == IDENT {
-                Some(token.text().to_string())
-            } else {
-                None
-            }
-        }))
+        Some(
+            architectures
+                .children_with_tokens()
+                .filter_map(move |node| {
+                    let token = node.as_token()?;
+                    match token.kind() {
+                        NOT => {
+                            negated = true;
+                            None
+                        }
+                        IDENT => {
+                            let architecture = if negated {
+                                format!("!{}", token.text())
+                            } else {
+                                token.text().to_string()
+                            };
+                            negated = false;
+                            Some(architecture)
+                        }
+                        _ => None,
+                    }
+                }),
+        )
     }
 
     /// Returns an iterator over the build profiles for this relation
@@ -2984,7 +3007,12 @@ impl Relation {
             if i > 0 {
                 builder.token(WHITESPACE.into(), " ");
             }
-            builder.token(IDENT.into(), arch);
+            if let Some(name) = arch.strip_prefix('!') {
+                builder.token(NOT.into(), "!");
+                builder.token(IDENT.into(), name);
+            } else {
+                builder.token(IDENT.into(), arch);
+            }
         }
         builder.token(R_BRACKET.into(), "]");
         builder.finish_node();
@@ -3492,6 +3520,25 @@ mod tests {
             .map(|s| s.to_string())
             .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn test_negated_architectures() {
+        let input = "foo [!arm64 !armhf]";
+        let relation: Relation = input.parse().unwrap();
+        assert_eq!(
+            relation.architectures().unwrap().collect::<Vec<_>>(),
+            vec!["!arm64", "!armhf"]
+        );
+        assert_eq!(relation.wrap_and_sort().to_string(), input);
+
+        let lossy: crate::lossy::Relation = relation.into();
+        let roundtrip: Relation = lossy.into();
+        assert_eq!(roundtrip.to_string(), input);
+
+        let mut relation: Relation = "foo [amd64]".parse().unwrap();
+        relation.set_architectures(vec!["!arm64", "!armhf"].into_iter());
+        assert_eq!(relation.to_string(), input);
     }
 
     #[test]
