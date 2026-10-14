@@ -246,6 +246,13 @@ fn parse(text: &str, allow_substvar: bool) -> Parse {
                     match self.current() {
                         Some(NOT) => {
                             self.bump();
+                            self.skip_ws();
+                            if self.current() == Some(IDENT) {
+                                self.bump();
+                            } else {
+                                // Don't consume the token; it may be the closing ']'.
+                                self.errors.push("Expected architecture name".to_string());
+                            }
                         }
                         Some(IDENT) => {
                             self.bump();
@@ -2284,6 +2291,29 @@ fn copy_version_text(builder: &mut GreenNodeBuilder, version_node: &SyntaxNode) 
     }
 }
 
+/// Build an ARCHITECTURES node; architectures prefixed with `!` are negated.
+fn build_architectures(
+    builder: &mut GreenNodeBuilder,
+    architectures: impl Iterator<Item = impl AsRef<str>>,
+) {
+    builder.start_node(ARCHITECTURES.into());
+    builder.token(L_BRACKET.into(), "[");
+    for (i, arch) in architectures.enumerate() {
+        if i > 0 {
+            builder.token(WHITESPACE.into(), " ");
+        }
+        let arch = arch.as_ref();
+        if let Some(name) = arch.strip_prefix('!') {
+            builder.token(NOT.into(), "!");
+            builder.token(IDENT.into(), name);
+        } else {
+            builder.token(IDENT.into(), arch);
+        }
+    }
+    builder.token(R_BRACKET.into(), "]");
+    builder.finish_node();
+}
+
 fn tokenize_version(builder: &mut GreenNodeBuilder, version: &Version) {
     let version_str = version.to_string();
 
@@ -2378,16 +2408,7 @@ impl Relation {
         }
         if let Some(architectures) = self.architectures() {
             builder.token(WHITESPACE.into(), " ");
-            builder.start_node(ARCHITECTURES.into());
-            builder.token(L_BRACKET.into(), "[");
-            for (i, arch) in architectures.enumerate() {
-                if i > 0 {
-                    builder.token(WHITESPACE.into(), " ");
-                }
-                builder.token(IDENT.into(), arch.as_str());
-            }
-            builder.token(R_BRACKET.into(), "]");
-            builder.finish_node();
+            build_architectures(&mut builder, architectures);
         }
         for profiles in self.profiles() {
             builder.token(WHITESPACE.into(), " ");
@@ -2811,23 +2832,43 @@ impl Relation {
 
     /// Return an iterator over the architectures for this relation
     ///
+    /// Excluded architectures retain their leading `!`.
+    ///
     /// # Example
     /// ```
     /// use debian_control::lossless::relations::Relation;
     /// let relation: Relation = "samba [amd64]".parse().unwrap();
     /// assert_eq!(relation.architectures().unwrap().collect::<Vec<_>>(), vec!["amd64".to_string()]);
+    /// let relation: Relation = "samba [!amd64]".parse().unwrap();
+    /// assert_eq!(relation.architectures().unwrap().collect::<Vec<_>>(), vec!["!amd64".to_string()]);
     /// ```
     pub fn architectures(&self) -> Option<impl Iterator<Item = String> + '_> {
         let architectures = self.0.children().find(|n| n.kind() == ARCHITECTURES)?;
+        let mut negated = false;
 
-        Some(architectures.children_with_tokens().filter_map(|node| {
-            let token = node.as_token()?;
-            if token.kind() == IDENT {
-                Some(token.text().to_string())
-            } else {
-                None
-            }
-        }))
+        Some(
+            architectures
+                .children_with_tokens()
+                .filter_map(move |node| {
+                    let token = node.as_token()?;
+                    match token.kind() {
+                        NOT => {
+                            negated = true;
+                            None
+                        }
+                        IDENT => {
+                            let architecture = if negated {
+                                format!("!{}", token.text())
+                            } else {
+                                token.text().to_string()
+                            };
+                            negated = false;
+                            Some(architecture)
+                        }
+                        _ => None,
+                    }
+                }),
+        )
     }
 
     /// Returns an iterator over the build profiles for this relation
@@ -2969,6 +3010,8 @@ impl Relation {
 
     /// Set the architectures for this relation
     ///
+    /// Prefix an architecture with `!` to exclude it.
+    ///
     /// # Example
     /// ```
     /// use debian_control::lossless::relations::Relation;
@@ -2978,16 +3021,7 @@ impl Relation {
     /// ```
     pub fn set_architectures<'a>(&mut self, architectures: impl Iterator<Item = &'a str>) {
         let mut builder = GreenNodeBuilder::new();
-        builder.start_node(ARCHITECTURES.into());
-        builder.token(L_BRACKET.into(), "[");
-        for (i, arch) in architectures.enumerate() {
-            if i > 0 {
-                builder.token(WHITESPACE.into(), " ");
-            }
-            builder.token(IDENT.into(), arch);
-        }
-        builder.token(R_BRACKET.into(), "]");
-        builder.finish_node();
+        build_architectures(&mut builder, architectures);
 
         let node_architectures = self.0.children().find(|n| n.kind() == ARCHITECTURES);
         if let Some(node_architectures) = node_architectures {
@@ -3492,6 +3526,25 @@ mod tests {
             .map(|s| s.to_string())
             .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn test_negated_architectures() {
+        let input = "foo [!arm64 !armhf]";
+        let relation: Relation = input.parse().unwrap();
+        assert_eq!(
+            relation.architectures().unwrap().collect::<Vec<_>>(),
+            vec!["!arm64", "!armhf"]
+        );
+        assert_eq!(relation.wrap_and_sort().to_string(), input);
+
+        let lossy: crate::lossy::Relation = relation.into();
+        let roundtrip: Relation = lossy.into();
+        assert_eq!(roundtrip.to_string(), input);
+
+        let mut relation: Relation = "foo [amd64]".parse().unwrap();
+        relation.set_architectures(vec!["!arm64", "!armhf"].into_iter());
+        assert_eq!(relation.to_string(), input);
     }
 
     #[test]
@@ -5458,6 +5511,13 @@ Description: test
             result.is_err(),
             "Expected error for invalid token in architecture list"
         );
+    }
+
+    #[test]
+    fn test_parse_negation_without_arch() {
+        let (relations, errors) = Relations::parse_relaxed("foo [!]", true);
+        assert_eq!(errors, vec!["Expected architecture name".to_string()]);
+        assert_eq!(relations.to_string(), "foo [!]");
     }
 
     #[test]
