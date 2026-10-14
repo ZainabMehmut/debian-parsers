@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "deb822-lossless"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "criterion",
  "deb822-fast",
@@ -932,7 +932,7 @@ dependencies = [
 
 [[package]]
 name = "debian-control"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "chrono",
  "deb822-fast",
@@ -978,18 +978,6 @@ dependencies = [
 
 [[package]]
 name = "debversion"
-version = "0.5.3"
-dependencies = [
- "chrono",
- "lazy-regex",
- "num-bigint",
- "pyo3",
- "serde",
- "sqlx",
-]
-
-[[package]]
-name = "debversion"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd0855110dc659601a99e89e04b8b51196161b3da5ff33848c47421bb6feeff8"
@@ -998,6 +986,18 @@ dependencies = [
  "lazy-regex",
  "num-bigint",
  "serde",
+]
+
+[[package]]
+name = "debversion"
+version = "0.5.5"
+dependencies = [
+ "chrono",
+ "lazy-regex",
+ "num-bigint",
+ "pyo3",
+ "serde",
+ "sqlx",
 ]
 
 [[package]]
