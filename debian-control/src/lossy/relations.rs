@@ -297,7 +297,7 @@ impl std::str::FromStr for Relation {
         let mut tokens = tokens.into_iter().peekable();
 
         fn eat_whitespace(tokens: &mut Peekable<impl Iterator<Item = (SyntaxKind, String)>>) {
-            while let Some((WHITESPACE, _)) = tokens.peek() {
+            while let Some((WHITESPACE | NEWLINE, _)) = tokens.peek() {
                 tokens.next();
             }
         }
@@ -391,7 +391,7 @@ impl std::str::FromStr for Relation {
             loop {
                 match tokens.next() {
                     Some((IDENT, s)) => archs.push(s),
-                    Some((WHITESPACE, _)) => {}
+                    Some((WHITESPACE | NEWLINE, _)) => {}
                     Some((R_BRACKET, _)) => break,
                     _ => return Err("Expected architecture name".to_string()),
                 }
@@ -407,23 +407,37 @@ impl std::str::FromStr for Relation {
         while let Some((L_ANGLE, _)) = tokens.peek() {
             tokens.next();
             let mut profile = Vec::new();
+            eat_whitespace(&mut tokens);
             loop {
                 match tokens.next() {
-                    Some((NOT, _)) => {
-                        let profile_name = match tokens.next() {
-                            Some((IDENT, s)) => s,
-                            _ => return Err("Expected profile name".to_string()),
-                        };
-                        profile.push(BuildProfile::Disabled(profile_name));
-                    }
-                    Some((IDENT, s)) => profile.push(BuildProfile::Enabled(s)),
-                    Some((WHITESPACE, _)) => {}
                     Some((R_ANGLE, _)) => break,
-                    _ => return Err("Expected profile name".to_string()),
+                    Some((NOT, _)) => match tokens.next() {
+                        Some((IDENT, s)) => profile.push(BuildProfile::Disabled(s)),
+                        _ => return Err("Expected build profile name after '!'".to_string()),
+                    },
+                    Some((IDENT, s)) => profile.push(BuildProfile::Enabled(s)),
+                    Some((kind, _)) => {
+                        return Err(format!(
+                            "Unexpected token in build profile list: {:?}",
+                            kind
+                        ))
+                    }
+                    None => return Err("Unterminated build profile list".to_string()),
+                }
+                match tokens.peek() {
+                    Some((WHITESPACE | NEWLINE, _)) => eat_whitespace(&mut tokens),
+                    Some((R_ANGLE, _)) => {}
+                    Some((kind, _)) => {
+                        return Err(format!(
+                            "Expected whitespace between build profiles, found {:?}",
+                            kind
+                        ))
+                    }
+                    None => return Err("Unterminated build profile list".to_string()),
                 }
             }
             if profile.is_empty() {
-                return Err("Expected profile to be non-empty".to_string());
+                return Err("Empty build profile list".to_string());
             }
             profiles.push(profile);
             eat_whitespace(&mut tokens);
@@ -752,6 +766,45 @@ mod tests {
                     BuildProfile::Enabled("stage1".to_string())
                 ]
             ]
+        );
+    }
+
+    #[test]
+    fn test_profiles_invalid() {
+        assert_eq!(
+            "foo <>".parse::<Relation>(),
+            Err("Empty build profile list".to_string())
+        );
+        assert_eq!(
+            "foo <a,b>".parse::<Relation>(),
+            Err("Expected whitespace between build profiles, found COMMA".to_string())
+        );
+        assert_eq!(
+            "foo <a , b>".parse::<Relation>(),
+            Err("Unexpected token in build profile list: COMMA".to_string())
+        );
+        assert_eq!(
+            "foo <a!b>".parse::<Relation>(),
+            Err("Expected whitespace between build profiles, found NOT".to_string())
+        );
+        assert_eq!(
+            "foo <!>".parse::<Relation>(),
+            Err("Expected build profile name after '!'".to_string())
+        );
+        assert_eq!(
+            "foo <a b".parse::<Relation>(),
+            Err("Unterminated build profile list".to_string())
+        );
+    }
+
+    #[test]
+    fn test_newlines() {
+        let relation: Relation = "foo (>= 1.0)\n [i386\n arm]\n <!nocheck\n !cross>"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            relation.to_string(),
+            "foo (>= 1.0) [i386 arm] <!nocheck !cross>"
         );
     }
 
