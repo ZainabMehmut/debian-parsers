@@ -171,7 +171,7 @@ impl std::fmt::Display for Relation {
             write!(f, " <")?;
             for (i, profile) in profile.iter().enumerate() {
                 if i > 0 {
-                    write!(f, ", ")?;
+                    write!(f, " ")?;
                 }
                 write!(f, "{}", profile)?;
             }
@@ -410,33 +410,27 @@ impl std::str::FromStr for Relation {
         let mut profiles = Vec::new();
         while let Some((L_ANGLE, _)) = tokens.peek() {
             tokens.next();
+            let mut profile = Vec::new();
             loop {
-                let mut profile = Vec::new();
-                loop {
-                    match tokens.next() {
-                        Some((NOT, _)) => {
-                            let profile_name = match tokens.next() {
-                                Some((IDENT, s)) => s,
-                                _ => return Err("Expected profile name".to_string()),
-                            };
-                            profile.push(BuildProfile::Disabled(profile_name));
-                        }
-                        Some((IDENT, s)) => profile.push(BuildProfile::Enabled(s)),
-                        Some((WHITESPACE, _)) => {}
-                        _ => return Err("Expected profile name".to_string()),
+                match tokens.next() {
+                    Some((NOT, _)) => {
+                        let profile_name = match tokens.next() {
+                            Some((IDENT, s)) => s,
+                            _ => return Err("Expected profile name".to_string()),
+                        };
+                        profile.push(BuildProfile::Disabled(profile_name));
                     }
-                    if let Some((COMMA, _)) = tokens.peek() {
-                        tokens.next();
-                    } else {
-                        break;
-                    }
-                }
-                profiles.push(profile);
-                if let Some((R_ANGLE, _)) = tokens.next() {
-                    eat_whitespace(&mut tokens);
-                    break;
+                    Some((IDENT, s)) => profile.push(BuildProfile::Enabled(s)),
+                    Some((WHITESPACE, _)) => {}
+                    Some((R_ANGLE, _)) => break,
+                    _ => return Err("Expected profile name".to_string()),
                 }
             }
+            if profile.is_empty() {
+                return Err("Expected profile to be non-empty".to_string());
+            }
+            profiles.push(profile);
+            eat_whitespace(&mut tokens);
         }
 
         eat_whitespace(&mut tokens);
@@ -747,20 +741,20 @@ mod tests {
 
     #[test]
     fn test_profiles() {
-        let input = "foo (>= 1.0) [i386 arm] <!nocheck> <!cross>, bar";
+        let input = "foo (>= 1.0) [i386 arm] <!nocheck> <!cross stage1>, bar";
         let parsed: Relations = input.parse().unwrap();
         assert_eq!(parsed.to_string(), input);
         assert_eq!(parsed.iter().count(), 2);
         let entry = parsed.iter().next().unwrap();
         assert_eq!(
             entry[0].to_string(),
-            "foo (>= 1.0) [i386 arm] <!nocheck> <!cross>"
+            "foo (>= 1.0) [i386 arm] <!nocheck> <!cross stage1>"
         );
         assert_eq!(entry.len(), 1);
         let relation = entry[0];
         assert_eq!(
             relation.to_string(),
-            "foo (>= 1.0) [i386 arm] <!nocheck> <!cross>"
+            "foo (>= 1.0) [i386 arm] <!nocheck> <!cross stage1>"
         );
         assert_eq!(
             relation.version,
@@ -777,7 +771,10 @@ mod tests {
             relation.profiles,
             vec![
                 vec![BuildProfile::Disabled("nocheck".to_string())],
-                vec![BuildProfile::Disabled("cross".to_string())]
+                vec![
+                    BuildProfile::Disabled("cross".to_string()),
+                    BuildProfile::Enabled("stage1".to_string())
+                ]
             ]
         );
     }
