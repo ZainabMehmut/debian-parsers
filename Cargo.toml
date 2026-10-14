@@ -20,4 +20,4 @@ homepage = "https://github.com/jelmer/debian-parsers"
 
 [workspace.dependencies]
 rowan = "0.16"
-pyo3 = ">=0.27, <0.30"
+pyo3 = ">=0.27, <0.31"
